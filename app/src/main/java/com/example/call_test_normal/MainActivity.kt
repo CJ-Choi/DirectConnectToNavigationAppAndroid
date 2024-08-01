@@ -1,6 +1,7 @@
 package com.example.call_test_normal
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -61,7 +62,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupSpinner() {
         val spinner: Spinner = binding.navSpinner
-        val options = arrayOf("KaKao Map", "Naver Map")
+        val options = arrayOf("KaKao Map", "Naver Map", "T-map")
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, options)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         spinner.adapter = adapter
@@ -109,6 +110,10 @@ class MainActivity : AppCompatActivity() {
                             // 네이버 지도 호출 URL
                             "nmap://route/car?slat=$startLat&slng=$startLng&dlat=$y&dlng=$x&dname=$encodedDestination&appname=com.example.myapp"
                         }
+                        "T-map" -> {
+                            // T-map 호출 URL
+                            "tmap://route?startx=$startLng&starty=$startLat&goalx=$x&goaly=$y&reqCoordType=WGS84&resCoordType=WGS84"
+                        }
                         else -> {
                             // 예상치 못한 앱 선택
                             Toast.makeText(this@MainActivity, "지도 앱을 선택하세요", Toast.LENGTH_SHORT).show()
@@ -128,6 +133,7 @@ class MainActivity : AppCompatActivity() {
                                 when (selectedApp) {
                                     "KaKao Map" -> "market://details?id=net.daum.android.map"
                                     "Naver Map" -> "market://details?id=com.nhn.android.nmap"
+                                    "T-map" -> "market://details?id=com.skt.tmap.ku"
                                     else -> ""
                                 }
                             )
