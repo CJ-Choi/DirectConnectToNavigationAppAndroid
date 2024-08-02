@@ -13,7 +13,9 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.ArrayAdapter
+import android.widget.Button
 import android.widget.Spinner
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     private var naverMapClient: NaverMapClient? = null
     private var currentLocation: Location? = null
 
+    // 토큰 브로드캐스트 리시버
     private val tokenReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val token = intent?.getStringExtra("data") ?: return
@@ -45,13 +48,14 @@ class MainActivity : AppCompatActivity() {
 
             Log.d("MainActivity", "FCM 토큰 수신: $token, Driver No: $driverNo")
 
-            // 네트워크 작업 코루틴으로 처리
+            // 토큰 보내기, 네트워크 작업이므로 코루틴 처리
             lifecycleScope.launch {
                 sendTokenToServer(token, driverNo)
             }
         }
     }
 
+    // FCM 메세지 브로드캐스트 리시버, 메세지 수신 후 알림 다이얼로그 팝업
     private val notificationReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val title = intent.getStringExtra("title")
@@ -61,45 +65,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showAlertDialog(title: String?, message: String?) {
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton("수락") { dialog, _ ->
-                // 수락 버튼 클릭 시 spinner 값에 따라 다른 내비게이션 앱 실행 및 자동 경로설정
-                val spinner = binding.navSpinner
-
-                val selectedApp = spinner.selectedItem.toString()
-                val destination = message.toString().trim()
-
-                if (!validateInputs(destination)) return@setPositiveButton
-                if (!checkCurrentLocation()) return@setPositiveButton
-
-                getApiLocation(destination, "", "") { x, y ->
-                    if (x != null && y != null) {
-                        val encodedDestination = encodeDestination(destination) ?: return@getApiLocation
-                        val url = generateNavigationUrl(selectedApp, encodedDestination, x, y) ?: return@getApiLocation
-                        launchNavigationApp(url, selectedApp)
-                    }
-                }
-
-                dialog.dismiss()
-            }
-            .setNegativeButton("거절") { dialog, _ ->
-                // 거절 버튼 클릭 시 다이얼로그 닫기
-                dialog.dismiss()
-            }
-            .show()
-    }
-
-    private val locationPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            getCurrentLocation()
-        } else {
-            Toast.makeText(this, "위치 권한이 필요합니다.", Toast.LENGTH_SHORT).show()
-        }
-    }
-
+    //생명 주기 - 액티비티 생성 시
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -134,10 +100,64 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    // 생명 주기 - 액티비티 파괴 시
     override fun onDestroy() {
         super.onDestroy()
         LocalBroadcastManager.getInstance(this).unregisterReceiver(tokenReceiver)
         LocalBroadcastManager.getInstance(this).unregisterReceiver(notificationReceiver)
+    }
+
+    //콜 메세지 수신 시 알림 다이얼로그 팝업, 수락 -> 내비 앱 실행, 거절 -> 팝업 해제
+    private fun showAlertDialog(title: String?, message: String?) {
+        val dialogView = layoutInflater.inflate(R.layout.custom_dialog, null)
+
+        val dialogTitle = dialogView.findViewById<TextView>(R.id.dialogTitle)
+        val dialogMessage = dialogView.findViewById<TextView>(R.id.dialogMessage)
+        val positiveButton = dialogView.findViewById<Button>(R.id.acceptButton)
+        val negativeButton = dialogView.findViewById<Button>(R.id.rejectButton)
+
+        dialogTitle.text = title
+        dialogMessage.text = message
+
+        val alertDialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        positiveButton.setOnClickListener {
+            val spinner = binding.navSpinner
+
+            val selectedApp = spinner.selectedItem.toString()
+            val destination = message.toString().trim()
+
+            if (!validateInputs(destination)) return@setOnClickListener
+            if (!checkCurrentLocation()) return@setOnClickListener
+
+            getApiLocation(destination, "", "") { x, y ->
+                if (x != null && y != null) {
+                    val encodedDestination = encodeDestination(destination) ?: return@getApiLocation
+                    val url = generateNavigationUrl(selectedApp, encodedDestination, x, y) ?: return@getApiLocation
+                    launchNavigationApp(url, selectedApp)
+                }
+            }
+            alertDialog.dismiss()
+        }
+
+        negativeButton.setOnClickListener {
+            // 거절 버튼 클릭 시 다이얼로그 닫기
+            alertDialog.dismiss()
+            // TODO 기사가 콜을 거절했음을 서버에 알려야 함
+        }
+
+        alertDialog.show()
+    }
+
+
+    private val locationPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            getCurrentLocation()
+        } else {
+            Toast.makeText(this, "위치 권한이 필요합니다.", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun setupFirebaseMessaging() {
@@ -220,6 +240,7 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
+    // 도착지 값을 문자열 -> UTF-8로 변환
     private fun encodeDestination(destination: String): String? {
         return try {
             URLEncoder.encode(destination, "UTF-8")
@@ -229,6 +250,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // API로 받은 값을 이용해 URL Scheme 설정
     private fun generateNavigationUrl(selectedApp: String, encodedDestination: String, x: String?, y: String?): String? {
         val startLat = currentLocation?.latitude
         val startLng = currentLocation?.longitude
@@ -244,6 +266,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 사용자 기기에 내비게이션 앱이 없을 경우 마켓으로 이동
     private fun launchNavigationApp(url: String, selectedApp: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
         try {
