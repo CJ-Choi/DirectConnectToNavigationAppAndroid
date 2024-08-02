@@ -157,7 +157,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             // API 호출, xy 좌표 획득
-            getApiLocation(destination, "3gw9s3bu99", "4WP0KLssfj863Qb1PQRzk3yWrrZRAQglhnIm7tI4") { x, y ->
+            getApiLocation(destination, "", "") { x, y ->
                 if (x != null && y != null) {
                     val encodedDestination: String
                     try {
