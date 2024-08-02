@@ -1,7 +1,6 @@
 package com.example.call_test_normal
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -18,6 +17,7 @@ import android.widget.Spinner
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -50,6 +50,46 @@ class MainActivity : AppCompatActivity() {
                 sendTokenToServer(token, driverNo)
             }
         }
+    }
+
+    private val notificationReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val title = intent.getStringExtra("title")
+            val message = intent.getStringExtra("message")
+            Log.d("MainActivity - notificationReceiver", "message : $message")
+            showAlertDialog(title, message)
+        }
+    }
+
+    private fun showAlertDialog(title: String?, message: String?) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("수락") { dialog, _ ->
+                // 수락 버튼 클릭 시 spinner 값에 따라 다른 내비게이션 앱 실행 및 자동 경로설정
+                val spinner = binding.navSpinner
+
+                val selectedApp = spinner.selectedItem.toString()
+                val destination = message.toString().trim()
+
+                if (!validateInputs(destination)) return@setPositiveButton
+                if (!checkCurrentLocation()) return@setPositiveButton
+
+                getApiLocation(destination, "", "") { x, y ->
+                    if (x != null && y != null) {
+                        val encodedDestination = encodeDestination(destination) ?: return@getApiLocation
+                        val url = generateNavigationUrl(selectedApp, encodedDestination, x, y) ?: return@getApiLocation
+                        launchNavigationApp(url, selectedApp)
+                    }
+                }
+
+                dialog.dismiss()
+            }
+            .setNegativeButton("거절") { dialog, _ ->
+                // 거절 버튼 클릭 시 다이얼로그 닫기
+                dialog.dismiss()
+            }
+            .show()
     }
 
     private val locationPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -88,11 +128,16 @@ class MainActivity : AppCompatActivity() {
         LocalBroadcastManager.getInstance(this).registerReceiver(
             tokenReceiver, IntentFilter("com.example.broadcast.TOKEN_BROADCAST")
         )
+        // 메세지 전송 브로드캐스트 리시버 등록
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            notificationReceiver, IntentFilter("com.example.NOTIFICATION_RECEIVED")
+        )
     }
 
     override fun onDestroy() {
         super.onDestroy()
         LocalBroadcastManager.getInstance(this).unregisterReceiver(tokenReceiver)
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(notificationReceiver)
     }
 
     private fun setupFirebaseMessaging() {
@@ -106,7 +151,7 @@ class MainActivity : AppCompatActivity() {
                 val token = task.result
                 Log.d("MainActivity", "FCM registration token: $token")
 
-                // 브로드캐스트 송신
+                // 브로드캐스트 송신 - token
                 Intent().also { intent ->
                     intent.action = "com.example.broadcast.TOKEN_BROADCAST"
                     intent.putExtra("data", token)
@@ -146,73 +191,77 @@ class MainActivity : AppCompatActivity() {
             val selectedApp = spinner.selectedItem.toString()
             val destination = locationEditText.text.toString().trim()
 
-            if (destination.isEmpty()) {
-                Toast.makeText(this@MainActivity, "도착지를 입력하세요", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
+            if (!validateInputs(destination)) return@setOnClickListener
+            if (!checkCurrentLocation()) return@setOnClickListener
 
-            if (currentLocation == null) {
-                Toast.makeText(this@MainActivity, "현재 위치를 가져올 수 없습니다.", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            // API 호출, xy 좌표 획득
             getApiLocation(destination, "", "") { x, y ->
                 if (x != null && y != null) {
-                    val encodedDestination: String
-                    try {
-                        encodedDestination = URLEncoder.encode(destination, "UTF-8")
-                    } catch (e: UnsupportedEncodingException) {
-                        Toast.makeText(this@MainActivity, "도착지 인코딩 오류", Toast.LENGTH_SHORT).show()
-                        return@getApiLocation
-                    }
-
-                    val startLat = currentLocation?.latitude
-                    val startLng = currentLocation?.longitude
-
-                    val url = when (selectedApp) {
-                        "KaKao Map" -> {
-                            // 카카오맵 호출 URL
-                            "kakaomap://route?sp=$startLat,$startLng&ep=$y,$x&by=CAR"
-                        }
-                        "Naver Map" -> {
-                            // 네이버 지도 호출 URL
-                            "nmap://route/car?slat=$startLat&slng=$startLng&dlat=$y&dlng=$x&dname=$encodedDestination&appname=com.example.myapp"
-                        }
-                        "T-map" -> {
-                            // T-map 호출 URL
-                            "tmap://route?startx=$startLng&starty=$startLat&goalx=$x&goaly=$y&reqCoordType=WGS84&resCoordType=WGS84"
-                        }
-                        else -> {
-                            // 예상치 못한 앱 선택
-                            Toast.makeText(this@MainActivity, "지도 앱을 선택하세요", Toast.LENGTH_SHORT).show()
-                            return@getApiLocation
-                        }
-                    }
-
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    try {
-                        // URL Scheme으로 앱 실행
-                        startActivity(intent)
-                    } catch (e: ActivityNotFoundException) {
-                        // 해당 앱이 설치되어 있지 않은 경우 Play Store로 이동
-                        val marketIntent = Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse(
-                                when (selectedApp) {
-                                    "KaKao Map" -> "market://details?id=net.daum.android.map"
-                                    "Naver Map" -> "market://details?id=com.nhn.android.nmap"
-                                    "T-map" -> "market://details?id=com.skt.tmap.ku"
-                                    else -> ""
-                                }
-                            )
-                        )
-                        startActivity(marketIntent)
-                    }
+                    val encodedDestination = encodeDestination(destination) ?: return@getApiLocation
+                    val url = generateNavigationUrl(selectedApp, encodedDestination, x, y) ?: return@getApiLocation
+                    launchNavigationApp(url, selectedApp)
                 }
             }
         }
     }
+
+    private fun validateInputs(destination: String): Boolean {
+        if (destination.isEmpty()) {
+            Toast.makeText(this@MainActivity, "도착지를 입력하세요", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        return true
+    }
+
+    private fun checkCurrentLocation(): Boolean {
+        if (currentLocation == null) {
+            Toast.makeText(this@MainActivity, "현재 위치를 가져올 수 없습니다.", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        return true
+    }
+
+    private fun encodeDestination(destination: String): String? {
+        return try {
+            URLEncoder.encode(destination, "UTF-8")
+        } catch (e: UnsupportedEncodingException) {
+            Toast.makeText(this@MainActivity, "도착지 인코딩 오류", Toast.LENGTH_SHORT).show()
+            null
+        }
+    }
+
+    private fun generateNavigationUrl(selectedApp: String, encodedDestination: String, x: String?, y: String?): String? {
+        val startLat = currentLocation?.latitude
+        val startLng = currentLocation?.longitude
+
+        return when (selectedApp) {
+            "KaKao Map" -> "kakaomap://route?sp=$startLat,$startLng&ep=$y,$x&by=CAR"
+            "Naver Map" -> "nmap://route/car?slat=$startLat&slng=$startLng&dlat=$y&dlng=$x&dname=$encodedDestination&appname=com.example.myapp"
+            "T-map" -> "tmap://route?startx=$startLng&starty=$startLat&goalx=$x&goaly=$y&reqCoordType=WGS84&resCoordType=WGS84"
+            else -> {
+                Toast.makeText(this@MainActivity, "지도 앱을 선택하세요", Toast.LENGTH_SHORT).show()
+                null
+            }
+        }
+    }
+
+    private fun launchNavigationApp(url: String, selectedApp: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        try {
+            startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            val marketUri = when (selectedApp) {
+                "KaKao Map" -> "market://details?id=net.daum.android.map"
+                "Naver Map" -> "market://details?id=com.nhn.android.nmap"
+                "T-map" -> "market://details?id=com.skt.tmap.ku"
+                else -> ""
+            }
+            if (marketUri.isNotEmpty()) {
+                val marketIntent = Intent(Intent.ACTION_VIEW, Uri.parse(marketUri))
+                startActivity(marketIntent)
+            }
+        }
+    }
+
 
     // 현재 위치를 가져오는 함수
     private fun getCurrentLocation() {

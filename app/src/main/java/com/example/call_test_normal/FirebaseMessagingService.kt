@@ -32,7 +32,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
         // 타임스탬프를 읽기 쉬운 형식으로 변환 (예: Date 객체 사용)
         val sentDate: Date = Date(sentTime)
-        val sdf: SimpleDateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val formattedDate: String = sdf.format(sentDate)
         Log.d("onMessageReceived", "formattedDate : $formattedDate")
 
@@ -47,16 +47,21 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val dbHelper = FirebaseMessageStorageHelper(applicationContext)
         dbHelper.setFcmData(messageId, messageBody, formattedDate)
         Log.d("onMessageReceived", "setFcmData : $messageId $messageBody $formattedDate ")
+
+        val intent = Intent("FCM_MESSAGE_EVENT").apply {
+            putExtra("messageId", messageId)
+            putExtra("messageBody", messageBody)
+            putExtra("formattedDate", formattedDate)
+        }
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
 
     private fun sendNotification(title: String?, message: String?) {
-        // TODO 무조건 MainActivity로 가지 말고 SQLite 로그인 정보와 대조하고 Intent 처리할 것
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val intent = Intent("com.example.NOTIFICATION_RECEIVED").apply {
             putExtra("title", title)
             putExtra("message", message)
         }
-        startActivity(intent)
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
 
     override fun onNewToken(token: String) {
