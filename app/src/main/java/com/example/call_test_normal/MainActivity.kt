@@ -3,7 +3,10 @@ package com.example.call_test_normal
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.Location
 import android.net.Uri
@@ -18,8 +21,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.example.call_test_normal.databinding.ActivityMainBinding
 import com.google.android.gms.location.LocationServices
+import com.google.firebase.FirebaseApp
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.launch
 import retrofit2.Call
 import retrofit2.Callback
@@ -32,6 +38,20 @@ class MainActivity : AppCompatActivity() {
     private var naverMapClient: NaverMapClient? = null
     private var currentLocation: Location? = null
 
+    private val tokenReceiver: BroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val token = intent?.getStringExtra("data") ?: return
+            val driverNo = intent.getIntExtra("driverNo", -1)
+
+            Log.d("MainActivity", "FCM 토큰 수신: $token, Driver No: $driverNo")
+
+            // 네트워크 작업 코루틴으로 처리
+            lifecycleScope.launch {
+                sendTokenToServer(token, driverNo)
+            }
+        }
+    }
+
     private val locationPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             getCurrentLocation()
@@ -43,6 +63,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        FirebaseApp.initializeApp(this)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -58,7 +80,54 @@ class MainActivity : AppCompatActivity() {
         } else {
             locationPermissionRequest.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
+
+        // FCM Setting
+        setupFirebaseMessaging()
+
+        // 토큰 전송 브로드캐스트 리시버 등록
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            tokenReceiver, IntentFilter("com.example.broadcast.TOKEN_BROADCAST")
+        )
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(tokenReceiver)
+    }
+
+    private fun setupFirebaseMessaging() {
+        FirebaseMessaging.getInstance().token
+            .addOnCompleteListener { task ->
+                if (!task.isSuccessful) {
+                    Log.w("MainActivity", "Fetching FCM registration token failed", task.exception)
+                    return@addOnCompleteListener
+                }
+
+                val token = task.result
+                Log.d("MainActivity", "FCM registration token: $token")
+
+                // 브로드캐스트 송신
+                Intent().also { intent ->
+                    intent.action = "com.example.broadcast.TOKEN_BROADCAST"
+                    intent.putExtra("data", token)
+                    intent.putExtra("driverNo", 12345) // 예제 driverNo 설정
+                    LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
+                }
+            }
+    }
+
+    private suspend fun sendTokenToServer(token: String, driverNo: Int) {
+        val retrofit = TokenInstance.api
+        val tokenRequest = TokenRequest(token, driverNo)
+
+        try {
+            val response = retrofit.sendToken(tokenRequest)
+            Log.d("MainActivity", "Token sent successfully: ${response.message}")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Exception in sending token: $e")
+        }
+    }
+
 
     private fun setupSpinner() {
         val spinner: Spinner = binding.navSpinner
@@ -88,7 +157,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             // API 호출, xy 좌표 획득
-            getApiLocation(destination, "", "") { x, y ->
+            getApiLocation(destination, "3gw9s3bu99", "4WP0KLssfj863Qb1PQRzk3yWrrZRAQglhnIm7tI4") { x, y ->
                 if (x != null && y != null) {
                     val encodedDestination: String
                     try {

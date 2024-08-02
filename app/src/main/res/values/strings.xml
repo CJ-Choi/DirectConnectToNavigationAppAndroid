@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">call_test_normal</string>
+    <string name="default_notification_channel_id">default_channel</string>
+    <string name="default_notification_channel_name">Default Channel</string>
 </resources>
